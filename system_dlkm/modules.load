@@ -1,8 +1,6 @@
 gzvm.ko
 kheaders.ko
-zsmalloc.ko
 libarc4.ko
-zram.ko
 mii.ko
 can-dev.ko
 vcan.ko
