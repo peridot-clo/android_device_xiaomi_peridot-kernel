@@ -7,11 +7,9 @@ import json
 from pathlib import Path
 import re
 import struct
-import subprocess
 
-DUMP_REVISION = "f643c83fdb689a2db5cd483961c750422ad287f6"
-DUMP_URL = "https://gitlab.com/Android-Dumps/poco/peridot.git"
-DUMP_BRANCH = "missi-user-16-BP2A.250605.031.A3-OS3.0.4.0.WNPMIXM-release-keys"
+DUMP_BUILD = "OS3.0.305.0.WNPCNXM"
+DUMP_SOURCE = "peridot-ota_full-OS3.0.305.0.WNPCNXM-user-16.0-f5c2a07bdf"
 ROOT = Path(__file__).resolve().parent
 
 
@@ -58,20 +56,21 @@ def validate(root):
 
 def extract(dump, output):
     require(not (output / "prebuilts.json").exists(), "Output already has prebuilts; use a fresh directory")
-    revision = subprocess.check_output(["git", "-C", str(dump), "rev-parse", "HEAD"], text=True).strip()
-    require(revision == DUMP_REVISION, f"Unexpected dump revision: {revision}")
+    build_prop = dump / "product/etc/build.prop"
+    require(build_prop.is_file(), "Missing product build properties")
+    properties = dict(line.split("=", 1) for line in build_prop.read_text().splitlines()
+                      if "=" in line and not line.startswith("#"))
+    build = properties.get("ro.product.build.version.incremental")
+    require(build == DUMP_BUILD, f"Unexpected dump build: {build}")
     files = {}
     inputs = {}
 
     def read(name):
-        data = (dump / name).read_bytes()
-        # Check each checked-out source against the pinned Git blob, not just HEAD.
-        oid = subprocess.check_output(["git", "-C", str(dump), "rev-parse",
-                                       f"{revision}:{name}"], text=True).strip()
-        actual = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
-        require(actual == oid, f"Source differs from pinned dump: {name}")
+        path = dump / name
+        require(path.is_file() and not path.is_symlink(), f"Missing or invalid source: {name}")
+        data = path.read_bytes()
         require(not data.startswith(b"version https://git-lfs.github.com/spec/"), f"LFS pointer: {name}")
-        inputs[name] = {"git_blob": oid, "sha256": digest(data)}
+        inputs[name] = {"sha256": digest(data), "size": len(data)}
         return data
 
     def put(name, data, source, transformation="none"):
@@ -87,12 +86,13 @@ def extract(dump, output):
     boot = read("boot.img")
     require(boot[:8] == b"ANDROID!" and u32(boot, 40) == 4, "Expected Android boot header v4")
     kernel = boot[4096:4096 + u32(boot, 8)]
-    require(kernel == read("boot/kernel"), "Unpacked kernel differs from boot.img")
+    unpacked_kernel = "boot/boot.img-kernel"
+    require(kernel == read(unpacked_kernel), "Unpacked kernel differs from boot.img")
     require(kernel[56:60] == b"ARM\x64", "Expected uncompressed ARM64 Image")
     banner = re.search(rb"Linux version ([^ ]+)[^\x00\n]+", kernel).group().decode()
     release = banner.split()[2]
-    put("Image", kernel, "boot.img", "extract kernel payload; matches boot/kernel")
-    put("kernel.release", (release + "\n").encode(), "boot/kernel", "extract Linux version banner")
+    put("Image", kernel, "boot.img", f"extract kernel payload; matches {unpacked_kernel}")
+    put("kernel.release", (release + "\n").encode(), unpacked_kernel, "extract Linux version banner")
     put(".config", read("ikconfig"), "ikconfig")
 
     vendor = read("vendor_boot.img")
@@ -125,11 +125,9 @@ def extract(dump, output):
                    "system_dlkm": "system_dlkm/flatten/lib/modules"}
     for dest, source in module_dirs.items():
         require((dump / source / "modules.load").is_file(), f"Missing {source}")
-        names = subprocess.check_output(["git", "-C", str(dump), "ls-tree", "-r",
-                                         "--name-only", revision, "--", source], text=True).splitlines()
-        for name in names:
-            path = dump / name
-            require(path.is_file() and not path.is_symlink(), f"Unexpected module directory entry: {path}")
+        paths = sorted(path for path in (dump / source).iterdir() if path.is_file())
+        require(all(not path.is_symlink() for path in paths), f"Unexpected symlink in {source}")
+        for path in paths:
             name = path.relative_to(dump).as_posix()
             data = read(name)
             transformation = "none"
@@ -140,10 +138,9 @@ def extract(dump, output):
                 transformation = "deduplicate load entries preserving first occurrence"
             put(f"{dest}/{path.name}", data, name, transformation)
 
-    # Recovery carries six audio modules that differ from vendor_dlkm. Keep
-    # these in their own directory; the device chooses them only for recovery.
+    # Some releases carry recovery-only modules outside vendor_boot. Keep
+    # those modules separate when they are present in the dump.
     recovery = sorted((dump / "recovery/ramdisk/vendor/lib/modules").glob("*.ko"))
-    require(len(recovery) == 6, "Expected all six stock recovery audio modules")
     for path in recovery:
         data = read(path.relative_to(dump).as_posix())
         put(f"recovery/{path.name}", data, path.relative_to(dump).as_posix())
@@ -151,11 +148,11 @@ def extract(dump, output):
     # AOSPA expects these paths even for binary-only imports. No symbol data is invented.
     for name in ("System.map", "Module.symvers", "techpack.built"):
         put(name, b"", None, "AOSPA prebuilt-only placeholder; not kernel build output")
-    manifest = {"dump_url": DUMP_URL, "dump_branch": DUMP_BRANCH, "dump_revision": revision,
+    manifest = {"dump_source": DUMP_SOURCE, "dump_build": build,
                 "linux_banner": banner, "inputs": inputs, "files": files,
                 "notes": ["Stock GKI and vendor modules have different vermagic releases; retained unchanged.",
                           "Stock zram/zsmalloc differ between system_dlkm and vendor_ramdisk; do not flatten across partitions.",
-                          "Six recovery audio modules differ from vendor_dlkm and are kept separately.",
+                          "Recovery-only modules are kept separately when supplied by the stock dump.",
                           "System.map and Module.symvers are empty compatibility placeholders.",
                           "No userspace headers can be reconstructed from these boot images."]}
     (output / "prebuilts.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
