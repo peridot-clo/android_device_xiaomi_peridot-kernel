@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
 /*
- * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 #ifndef LINUX_POWERSTATE_H
 #define LINUX_POWERSTATE_H
@@ -19,6 +18,7 @@
 #define POWER_STATE_CDSP_EXIT 8
 #define POWER_STATE_EXIT_DEEPSLEEP_STATE 9
 #define POWER_STATE_EXIT_HIBERNATE_STATE 10
+#define POWER_STATE_GENERATE_HIB_KEY 11
 #define EXCHANGE_CODE  'V'
 
 enum ps_event_type {
@@ -31,6 +31,12 @@ enum ps_event_type {
 	CDSP_BEFORE_POWERDOWN,
 	CDSP_AFTER_POWERUP,
 	PREPARE_FOR_HIBERNATION,
+	CDSP1_BEFORE_POWERDOWN,
+	CDSP1_AFTER_POWERUP,
+	GPDSP0_BEFORE_POWERDOWN,
+	GPDSP0_AFTER_POWERUP,
+	GPDSP1_BEFORE_POWERDOWN,
+	GPDSP1_AFTER_POWERUP,
 };
 
 enum subsys_transition {
@@ -49,5 +55,6 @@ enum subsys_transition {
 #define CDSP_EXIT _IOWR(EXCHANGE_CODE, POWER_STATE_CDSP_EXIT, __u32*)
 #define EXIT_DEEPSLEEP_STATE _IOWR(EXCHANGE_CODE, POWER_STATE_EXIT_DEEPSLEEP_STATE, __u32*)
 #define EXIT_HIBERNATE_STATE _IOWR(EXCHANGE_CODE, POWER_STATE_EXIT_HIBERNATE_STATE, __u32*)
+#define GENERATE_HIB_KEY _IOWR(EXCHANGE_CODE, POWER_STATE_GENERATE_HIB_KEY, __u32*)
 
 #endif
